@@ -3,7 +3,7 @@ alias hsg="history | grep "
 alias findg="find . | grep "
 
 alias home="cd ~"
-alias coding="cd ~/coding"
+alias coding="cd ~/Coding"
 alias ..="cd ..; ls"
 alias ...="cd ../..; ls"
 alias ....="cd ../../..; ls"
@@ -29,16 +29,13 @@ alias ag.="antigravity . --new-window"
 alias arcIcon="defaults write company.thebrowser.Browser currentAppIconName -string "
 alias c="claude"
 
-alias cleanup-mac="echo '🧹 Sweeping up developer trash...' && \
-rm -rf ~/Library/Developer/Xcode/DerivedData/* && \
-echo '✅ Xcode Derived Data cleared' && \
-xcrun simctl delete unavailable && \
-echo '✅ Unavailable Simulators deleted' && \
-npm cache clean --force && \
-echo '✅ NPM cache cleared' && \
-yarn cache clean && \
-echo '✅ Yarn cache cleared' && \
-rm -rf ~/.gradle/caches/* && \
-echo '✅ Gradle caches cleared' && \
-brew cleanup && \
-echo '✅ Homebrew cleanup complete! Your Mac is clean. ✨'"
+cleanup-mac() {
+  echo '🧹 Sweeping up developer trash...'
+  rm -rf ~/Library/Developer/Xcode/DerivedData/*(N) && echo '✅ Xcode Derived Data cleared'
+  (( $+commands[xcrun] )) && xcrun simctl delete unavailable && echo '✅ Unavailable Simulators deleted'
+  (( $+commands[npm] )) && npm cache clean --force && echo '✅ NPM cache cleared'
+  (( $+commands[yarn] )) && yarn cache clean && echo '✅ Yarn cache cleared'
+  rm -rf ~/.gradle/caches/*(N) && echo '✅ Gradle caches cleared'
+  (( $+commands[brew] )) && brew cleanup && echo '✅ Homebrew cleanup complete!'
+  echo '✨ Your Mac is clean.'
+}

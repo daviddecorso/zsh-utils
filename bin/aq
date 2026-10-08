@@ -14,7 +14,7 @@ ${c_hdr}Commands${c_off}
   all, la [dir]      List queues in every repo under dir (default: .)
   next, n [count]    Send the next prompt(s) to claude and archive them
   g [count]          Same as next, but sends to agy
-  back, undo         Restore the most recently sent prompt
+  back, undo         Restore the most recently sent batch
   help, h            Show this help
 
 ${c_hdr}Examples${c_off}
@@ -27,11 +27,17 @@ Set AQ_DEPTH to change how deep 'aq all' searches (default 4).${c_off}
 EOF
 }
 
+# Keeps the queue out of `git add .` in the host repo.
+_aq_init() {
+  mkdir -p "$1/done"
+  [[ -e "$1/.gitignore" ]] || print -r -- '*' > "$1/.gitignore"
+}
+
 # <queue-dir> <indent>; color vars come from aq's scope
 _aq_print() {
   local dir=$1 pad=$2
-  local -a items=("$dir"/[0-9][0-9][0-9]-*.md(N))
-  local width=$(( ${COLUMNS:-80} - ${#pad} - 6 ))
+  local -a items=("$dir"/<->-*.md(Nn))
+  local width=$(( (COLUMNS > 0 ? COLUMNS : 80) - ${#pad} - 6 ))
   local f title
   for f in $items; do
     title="$(head -1 "$f" | sed 's/^#* *//')"
@@ -52,7 +58,7 @@ _aq_all() {
   local q name total=0 projects=0
   local -a items archived
   for q in $queues; do
-    items=("$q"/[0-9][0-9][0-9]-*.md(N))
+    items=("$q"/<->-*.md(Nn))
     (( ${#items} )) || continue
     archived=("$q"/done/*.md(N))
 
@@ -95,13 +101,16 @@ aq() {
     echo "❌ Not inside a git repo (try 'aq all')" >&2; return 1
   }
   local dir="${common:A:h}/.queue"
+  # One line per sent batch, so undo can restore the whole batch.
+  local batch_log="$dir/done/.history"
 
   case "$cmd" in
 
     add|a)
-      mkdir -p "$dir"
+      _aq_init "$dir"
+      # Count archived prompts too so numbers are never reused.
       local max=0 f num
-      for f in "$dir"/[0-9][0-9][0-9]-*.md(N); do
+      for f in "$dir"/{,done/}<->-*.md(N); do
         num="${${f:t}%%-*}"
         (( 10#$num > max )) && max=$((10#$num))
       done
@@ -110,7 +119,7 @@ aq() {
       local body="$*"
       if [[ -z "$body" ]]; then
         local tmp="$dir/.draft.md"
-        ${EDITOR:-vim} "$tmp" || return 1
+        ${=EDITOR:-vim} "$tmp" || return 1
         [[ -s "$tmp" ]] || { rm -f "$tmp"; echo "❌ empty, nothing queued"; return 1 }
         body="$(<$tmp)"; rm -f "$tmp"
       fi
@@ -127,18 +136,23 @@ aq() {
       ;;
 
     ls|l)
-      local -a items=("$dir"/[0-9][0-9][0-9]-*.md(N))
+      local -a items=("$dir"/<->-*.md(Nn))
       (( ${#items} )) || { echo "✨  queue empty"; return 0 }
       _aq_print "$dir" "  "
       ;;
 
     next|n|g)
-      local -a items=("$dir"/[0-9][0-9][0-9]-*.md(N))
+      local -a items=("$dir"/<->-*.md(Nn))
       (( ${#items} )) || { echo "✨  queue empty"; return 0 }
 
       local count="${1:-1}"
+      [[ "$count" == <1-> ]] || { echo "❌ count must be a positive number" >&2; return 1 }
       (( count > ${#items} )) && count=${#items}
       local -a batch=(${items[1,count]})
+
+      local agent=claude
+      [[ "$cmd" == "g" ]] && agent=agy
+      (( $+commands[$agent] )) || { echo "❌ $agent not found, nothing sent" >&2; return 1 }
 
       local prompt="" f
       for f in $batch; do
@@ -146,10 +160,11 @@ aq() {
         echo "▶️   ${f:t}"
       done
 
-      mkdir -p "$dir/done"
+      _aq_init "$dir"
       for f in $batch; do mv "$f" "$dir/done/"; done
+      print -r -- ${batch:t} >> "$batch_log"
 
-      if [[ "$cmd" == "g" ]]; then
+      if [[ "$agent" == "agy" ]]; then
         exec agy -i "$prompt"
       else
         exec claude "$prompt"
@@ -157,9 +172,25 @@ aq() {
       ;;
 
     back|undo)
-      local -a archived=("$dir"/done/[0-9][0-9][0-9]-*.md(NOn))
-      (( ${#archived} )) || { echo "nothing to restore"; return 1 }
-      mv "${archived[1]}" "$dir/" && echo "↩️   ${archived[1]:t}"
+      local -a names lines
+      if [[ -s "$batch_log" ]]; then
+        lines=(${(f)"$(<$batch_log)"})
+        names=(${=lines[-1]})
+        if (( ${#lines} > 1 )); then
+          print -rl -- "${(@)lines[1,-2]}" > "$batch_log"
+        else
+          : > "$batch_log"
+        fi
+      else
+        names=("$dir"/done/<->-*.md(Nom[1]:t))
+      fi
+
+      local name restored=0
+      for name in $names; do
+        [[ -f "$dir/done/$name" ]] || continue
+        mv "$dir/done/$name" "$dir/" && echo "↩️   $name" && (( ++restored ))
+      done
+      (( restored )) || { echo "nothing to restore"; return 1 }
       ;;
 
     *)

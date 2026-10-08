@@ -6,12 +6,11 @@ if [ -z "$1" ]; then
 fi
 
 local msg="$1"
-local branch=$(git branch --show-current)
-local ticket_id=$(echo "$branch" | grep -oE '[A-Za-z]+-[0-9]+' | head -n 1 | tr '[:lower:]' '[:upper:]')
+local ticket_id=$(_ticket_id)
 
 if [[ -n "$ticket_id" ]]; then
   [[ "$msg" != *\. ]] && msg="$msg."
   msg="$msg $ticket_id"
 fi
 
-git add . && git commit -m "$msg"
+git add -A && git commit -m "$msg"

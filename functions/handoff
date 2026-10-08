@@ -8,7 +8,7 @@ local dir="$root/plans"
 local plan
 if [[ -n "$1" ]]; then
   # accept a path, a filename, or a bare slug
-  local -a hits=("$dir"/*"$1"*.md(N) "$1"(N))
+  local -aU hits=("$dir"/*"${1%.md}"*.md(N:A) "$1"(N.:A))
   (( ${#hits} )) || { echo "❌ no plan matching '$1'" >&2; return 1 }
   if (( ${#hits} > 1 )); then
     echo "multiple matches:"

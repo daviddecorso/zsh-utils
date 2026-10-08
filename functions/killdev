@@ -12,9 +12,10 @@ local servers=(
 
 echo "Terminating dev servers..."
 
+# Match only an executable path segment (".../.bin/next dev"), not the word anywhere in a command line.
 local server
 for server in "${servers[@]}"; do
-  pkill -9 -f "$server" 2>/dev/null
+  pkill -f "(^|/)${server}(\.[cm]?js)?( |$)" 2>/dev/null
 done
 
 echo "✅ All clean!"
