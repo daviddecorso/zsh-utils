@@ -1,0 +1,12 @@
+# Prints the branch new work starts from: the remote's HEAD ($1, default origin), else its main/master, else local main/master, else the current branch.
+local remote="${1:-origin}" base ref
+base="$(git symbolic-ref --quiet --short "refs/remotes/$remote/HEAD" 2>/dev/null)"
+if [[ -z "$base" ]]; then
+  for ref in "refs/remotes/$remote/main" "refs/remotes/$remote/master" refs/heads/main refs/heads/master; do
+    if git show-ref --verify --quiet "$ref"; then
+      base="${${ref#refs/remotes/}#refs/heads/}"
+      break
+    fi
+  done
+fi
+print -r -- "${base:-$(git branch --show-current)}"

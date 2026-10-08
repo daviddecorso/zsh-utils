@@ -1,1 +1,6 @@
-cp -Rc "$1" "$2" 2>/dev/null || cp -al "$1" "$2" 2>/dev/null
+# Copy-on-write copy where the filesystem supports it; removes a partial copy on failure.
+if [[ $OSTYPE == darwin* ]]; then
+  cp -Rc "$1" "$2" 2>/dev/null
+else
+  cp -R --reflink=auto "$1" "$2" 2>/dev/null
+fi || { rm -rf "$2"; return 1 }

@@ -1,0 +1,4 @@
+#compdef gwt-rm
+local -a branches
+branches=(${${(M)${(f)"$(git worktree list --porcelain 2>/dev/null)"}:#branch *}#branch refs/heads/})
+_arguments '-D[also delete the branch]' "1::branch:(${branches[*]})"

@@ -1,0 +1,54 @@
+# Remove a worktree (default: the current one); -D also deletes its branch.
+emulate -L zsh
+
+local delete_branch=0
+if [[ $1 == -D ]]; then
+  delete_branch=1
+  shift
+fi
+
+local porcelain
+porcelain="$(git worktree list --porcelain 2>/dev/null)" || {
+  echo "❌ Not inside a git repo"
+  return 1
+}
+
+local -a entries=("${(@ps:\n\n:)porcelain}")
+local main="${${(@f)entries[1]}[1]#worktree }"
+local target branch="$1"
+
+if [[ -n "$branch" ]]; then
+  local entry
+  for entry in $entries; do
+    local -a fields=("${(@f)entry}")
+    if (( ${fields[(Ie)branch refs/heads/$branch]} )); then
+      target="${fields[1]#worktree }"
+      break
+    fi
+  done
+  if [[ -z "$target" ]]; then
+    echo "❌ No worktree has $branch checked out"
+    return 1
+  fi
+else
+  target="$(git rev-parse --show-toplevel)" || return 1
+  branch="$(git branch --show-current)"
+fi
+
+if [[ "$target" == "$main" ]]; then
+  echo "❌ $target is the main checkout, not a worktree"
+  return 1
+fi
+
+git -C "$main" worktree remove "$target" || {
+  echo "    commit or stash first, or force it: git worktree remove --force '$target'"
+  return 1
+}
+echo "🗑️   removed $target"
+git -C "$main" worktree prune
+
+[[ "$PWD/" == "$target"/* ]] && cd "$main"
+
+if (( delete_branch )) && [[ -n "$branch" ]]; then
+  git -C "$main" branch -D "$branch"
+fi

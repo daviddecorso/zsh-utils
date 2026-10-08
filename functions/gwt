@@ -1,73 +1,119 @@
 # Make a worktree
-local branch="${1:-$(pbpaste | tr -d '[:space:]')}"
+emulate -L zsh
+setopt extended_glob
+
+local branch="$1"
+if [[ -z "$branch" ]]; then
+  if (( $+commands[pbpaste] )); then branch="$(pbpaste)"
+  elif (( $+commands[wl-paste] )); then branch="$(wl-paste -n)"
+  elif (( $+commands[xclip] )); then branch="$(xclip -o -selection clipboard)"
+  elif (( $+commands[xsel] )); then branch="$(xsel -ob)"
+  fi
+  branch="${${branch##[[:space:]]#}%%[[:space:]]#}"
+fi
 
 if [[ -z "$branch" ]]; then
-  echo "❌ No branch name — pass one as an arg or copy it from Linear first"
+  echo "❌ No branch name — pass one as an arg or copy it to the clipboard first"
   return 1
 fi
 
-local root
-root="$(git rev-parse --show-toplevel 2>/dev/null)" || {
+if [[ $branch == -* ]] || ! git check-ref-format --branch "$branch" &>/dev/null; then
+  echo "❌ Not a valid branch name: '$branch'"
+  return 1
+fi
+
+local porcelain
+porcelain="$(git worktree list --porcelain 2>/dev/null)" || {
   echo "❌ Not inside a git repo"
   return 1
 }
 
+local -a entries=("${(@ps:\n\n:)porcelain}")
+local -a main_entry=("${(@f)entries[1]}")
+if (( ${main_entry[(Ie)bare]} )); then
+  echo "❌ Bare repos aren't supported"
+  return 1
+fi
+local root="${main_entry[1]#worktree }"
+
+local entry
+for entry in $entries; do
+  local -a fields=("${(@f)entry}")
+  if (( ${fields[(Ie)branch refs/heads/$branch]} )); then
+    echo "♻️   $branch is already checked out at ${fields[1]#worktree }"
+    cd "${fields[1]#worktree }"
+    return
+  fi
+done
+
 local repo_name="${root:t}"
-local dir_name="${branch##*/}"
+local dir_name="${branch//\//-}"
 local worktrees_root="${GWT_ROOT:-$HOME/Coding/worktrees}"
 local worktree_path="${worktrees_root}/${repo_name}/${dir_name}"
+local remote="${GWT_REMOTE:-origin}"
 
-git fetch --quiet origin 2>/dev/null
-
-local base
-base="$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null)"
-if [[ -z "$base" ]]; then
-  if git show-ref --verify --quiet refs/heads/main; then
-    base="main"
-  elif git show-ref --verify --quiet refs/heads/master; then
-    base="master"
-  else
-    base="$(git branch --show-current)"
-  fi
+if [[ -e "$worktree_path" ]]; then
+  echo "❌ $worktree_path already exists and isn't a worktree for $branch"
+  return 1
 fi
+
+git -C "$root" fetch --quiet "$remote" 2>/dev/null
+
+local base="$(cd "$root" && _git_base "$remote")"
 
 echo "🌿  branch : $branch"
 echo "📁  path   : $worktree_path"
 
-if git show-ref --verify --quiet "refs/heads/$branch"; then
+if git -C "$root" show-ref --verify --quiet "refs/heads/$branch"; then
   echo "♻️   existing local branch"
-  git worktree add "$worktree_path" "$branch" || return 1
-elif git show-ref --verify --quiet "refs/remotes/origin/$branch"; then
-  echo "☁️   tracking origin/$branch"
-  git worktree add --track -b "$branch" "$worktree_path" "origin/$branch" || return 1
+  git -C "$root" worktree add "$worktree_path" "$branch" || return 1
+elif git -C "$root" show-ref --verify --quiet "refs/remotes/$remote/$branch"; then
+  echo "☁️   tracking $remote/$branch"
+  git -C "$root" worktree add --track -b "$branch" "$worktree_path" "$remote/$branch" || return 1
 else
   echo "✨  new branch off $base"
-  git worktree add -b "$branch" "$worktree_path" "$base" || return 1
+  git -C "$root" worktree add --no-track -b "$branch" "$worktree_path" "$base" || return 1
 fi
 
-# Quoted so they glob against $root in the loop, not against $PWD here.
-local extras=('.env*' google-services.json 'ios/*/GoogleService-Info.plist' .xcode.env.local)
-local f
-for f in "$root"/${~^extras}(N); do
-  local rel="${f#$root/}"
-  mkdir -p "$worktree_path/${rel:h}"
-  cp "$f" "$worktree_path/$rel" && echo "    ✓ $rel"
-done
-
-local d
-for d in node_modules ios/Pods; do
-  [[ -d "$root/$d" ]] || continue
-  echo "📦  cloning $d..."
-  mkdir -p "$worktree_path/${d:h}"
-  if _gwt_clone "$root/$d" "$worktree_path/$d"; then
-    echo "    ✓ $d"
+local -a patterns=(${(f)"$(_gwt_includes "$root")"})
+local pattern src rel cloned=0
+for pattern in $patterns; do
+  if [[ $pattern == */ ]]; then
+    for src in "$root"/${~${pattern%/}}(N/); do
+      rel="${src#$root/}"
+      [[ -e "$worktree_path/$rel" ]] && continue
+      echo "📦  cloning $rel..."
+      mkdir -p "$worktree_path/${rel:h}"
+      if _gwt_clone "$src" "$worktree_path/$rel"; then
+        echo "    ✓ $rel"
+        cloned=1
+      else
+        echo "    ⚠️  $rel failed — install manually"
+      fi
+    done
   else
-    echo "    ⚠️  $d failed — install manually"
+    for src in "$root"/${~pattern}(N.); do
+      rel="${src#$root/}"
+      # Tracked files are already checked out; root's copy may carry local edits.
+      git -C "$root" ls-files --error-unmatch -- "$rel" &>/dev/null && continue
+      mkdir -p "$worktree_path/${rel:h}"
+      cp "$src" "$worktree_path/$rel" && echo "    ✓ $rel"
+    done
   fi
 done
 
-if ! git diff --quiet "$base" "$branch" -- package.json yarn.lock pnpm-lock.yaml pnpm-workspace.yaml 2>/dev/null; then
-  echo "⚠️   deps differ from $base — reinstall dependencies"
+if (( cloned )) && ! git -C "$root" diff --quiet HEAD "$branch" -- \
+    package.json package-lock.json yarn.lock pnpm-lock.yaml pnpm-workspace.yaml bun.lock bun.lockb ios/Podfile.lock 2>/dev/null; then
+  echo "⚠️   deps differ from the main checkout — reinstall dependencies"
 fi
 
-cd "$worktree_path"
+cd "$worktree_path" || return 1
+
+local hook="$root/.gwt-post-create"
+if [[ -x "$hook" || -n "$GWT_POST_CREATE" ]]; then
+  echo "🪝  post-create hook"
+  (
+    export GWT_MAIN_WORKTREE="$root" GWT_BRANCH="$branch"
+    if [[ -x "$hook" ]]; then "$hook"; else eval "$GWT_POST_CREATE"; fi
+  ) || echo "⚠️   post-create hook failed"
+fi
