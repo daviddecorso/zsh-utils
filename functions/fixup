@@ -1,0 +1,8 @@
+# Auto-fixup the first commit on this branch
+git add .
+local FIXUP_HASH=$(git log main..HEAD --reverse --format="%H" | head -n 1)
+if [[ -z "$FIXUP_HASH" ]]; then
+  git commit -m "dev(dev): Dev"
+else
+  git commit --fixup "$FIXUP_HASH"
+fi

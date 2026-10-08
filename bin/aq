@@ -1,0 +1,173 @@
+#!/usr/bin/env zsh
+# Per-repo prompt queue for claude / agy.
+
+_aq_help() {
+  cat <<EOF
+${c_hdr}aq${c_off}: per-repo prompt queue for claude / agy
+
+${c_hdr}Usage${c_off}
+  aq <command> [args]
+
+${c_hdr}Commands${c_off}
+  add, a [text]      Queue a prompt (opens \$EDITOR if no text given)
+  ls, l              List this repo's queue (default)
+  all, la [dir]      List queues in every repo under dir (default: .)
+  next, n [count]    Send the next prompt(s) to claude and archive them
+  g [count]          Same as next, but sends to agy
+  back, undo         Restore the most recently sent prompt
+  help, h            Show this help
+
+${c_hdr}Examples${c_off}
+  aq add "fix the login redirect loop"
+  aq next 3          ${c_dim}# batch the next three prompts into one session${c_off}
+  aq all ~/Coding
+
+${c_dim}Queues live at <repo>/.queue and are shared across worktrees.
+Set AQ_DEPTH to change how deep 'aq all' searches (default 4).${c_off}
+EOF
+}
+
+# <queue-dir> <indent>; color vars come from aq's scope
+_aq_print() {
+  local dir=$1 pad=$2
+  local -a items=("$dir"/[0-9][0-9][0-9]-*.md(N))
+  local width=$(( ${COLUMNS:-80} - ${#pad} - 6 ))
+  local f title
+  for f in $items; do
+    title="$(head -1 "$f" | sed 's/^#* *//')"
+    (( ${#title} > width )) && title="${title[1,width-1]}…"
+    printf '%s%s%s%s  %s\n' "$pad" "$c_num" "${${f:t}%%-*}" "$c_off" "$title"
+  done
+}
+
+_aq_all() {
+  local root="${1:-$PWD}"
+  [[ -d "$root" ]] || { echo "❌ not a directory: $root" >&2; return 1 }
+  root="${root:A}"
+
+  local -a queues=(${(fo)"$(find "$root" -mindepth 1 -maxdepth ${AQ_DEPTH:-4} \
+    \( -name node_modules -o \( -name '.*' ! -name .queue \) \) -prune \
+    -o -type d -name .queue -print -prune 2>/dev/null)"})
+
+  local q name total=0 projects=0
+  local -a items archived
+  for q in $queues; do
+    items=("$q"/[0-9][0-9][0-9]-*.md(N))
+    (( ${#items} )) || continue
+    archived=("$q"/done/*.md(N))
+
+    name="${${q:h}#$root/}"
+    [[ "${q:h}" == "$root" ]] && name="${root:t}"
+
+    printf '%s%s%s  %s%d queued · %d done%s\n' \
+      "$c_hdr" "$name" "$c_off" "$c_dim" ${#items} ${#archived} "$c_off"
+    _aq_print "$q" "   "
+    echo
+
+    (( total += ${#items} ))
+    (( ++projects ))
+  done
+
+  if (( total )); then
+    local s=s; (( projects == 1 )) && s=
+    printf '%s%d queued across %d project%s%s\n' "$c_dim" $total $projects "$s" "$c_off"
+  else
+    echo "✨  nothing queued under ${root/#$HOME/~}"
+  fi
+}
+
+aq() {
+  local cmd="${1:-ls}"
+  (( $# )) && shift
+
+  local c_hdr= c_num= c_dim= c_off=
+  if [[ -t 1 ]]; then
+    c_hdr=$'\e[1;34m' c_num=$'\e[33m' c_dim=$'\e[2m' c_off=$'\e[0m'
+  fi
+
+  case "$cmd" in
+    help|h|-h|--help) _aq_help; return 0 ;;
+    all|la)           _aq_all "$@"; return ;;
+  esac
+
+  local common
+  common="$(git rev-parse --git-common-dir 2>/dev/null)" || {
+    echo "❌ Not inside a git repo (try 'aq all')" >&2; return 1
+  }
+  local dir="${common:A:h}/.queue"
+
+  case "$cmd" in
+
+    add|a)
+      mkdir -p "$dir"
+      local max=0 f num
+      for f in "$dir"/[0-9][0-9][0-9]-*.md(N); do
+        num="${${f:t}%%-*}"
+        (( 10#$num > max )) && max=$((10#$num))
+      done
+      local seq=$(printf "%03d" $((max + 1)))
+
+      local body="$*"
+      if [[ -z "$body" ]]; then
+        local tmp="$dir/.draft.md"
+        ${EDITOR:-vim} "$tmp" || return 1
+        [[ -s "$tmp" ]] || { rm -f "$tmp"; echo "❌ empty, nothing queued"; return 1 }
+        body="$(<$tmp)"; rm -f "$tmp"
+      fi
+
+      local slug
+      slug="$(print -r -- "${body%%$'\n'*}" \
+        | tr '[:upper:]' '[:lower:]' \
+        | tr -cs '[:alnum:]' '-' \
+        | sed 's/^-//;s/-$//' | cut -c1-40)"
+      [[ -n "$slug" ]] || slug="task"
+
+      print -r -- "$body" > "$dir/${seq}-${slug}.md"
+      echo "➕  ${seq}-${slug}.md"
+      ;;
+
+    ls|l)
+      local -a items=("$dir"/[0-9][0-9][0-9]-*.md(N))
+      (( ${#items} )) || { echo "✨  queue empty"; return 0 }
+      _aq_print "$dir" "  "
+      ;;
+
+    next|n|g)
+      local -a items=("$dir"/[0-9][0-9][0-9]-*.md(N))
+      (( ${#items} )) || { echo "✨  queue empty"; return 0 }
+
+      local count="${1:-1}"
+      (( count > ${#items} )) && count=${#items}
+      local -a batch=(${items[1,count]})
+
+      local prompt="" f
+      for f in $batch; do
+        prompt+="$(<$f)"$'\n\n---\n\n'
+        echo "▶️   ${f:t}"
+      done
+
+      mkdir -p "$dir/done"
+      for f in $batch; do mv "$f" "$dir/done/"; done
+
+      if [[ "$cmd" == "g" ]]; then
+        exec agy -i "$prompt"
+      else
+        exec claude "$prompt"
+      fi
+      ;;
+
+    back|undo)
+      local -a archived=("$dir"/done/[0-9][0-9][0-9]-*.md(NOn))
+      (( ${#archived} )) || { echo "nothing to restore"; return 1 }
+      mv "${archived[1]}" "$dir/" && echo "↩️   ${archived[1]:t}"
+      ;;
+
+    *)
+      echo "❌ unknown command: $cmd" >&2
+      _aq_help >&2
+      return 1
+      ;;
+  esac
+}
+
+aq "$@"

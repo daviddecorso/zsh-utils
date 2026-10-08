@@ -1,0 +1,11 @@
+# Interactive git add using fzf (with delta preview)
+local files=$(git ls-files --modified --others --exclude-standard \
+  | fzf --multi \
+        --prompt="Stage files (TAB to multi-select) > " \
+        --preview="git diff --color=always {} | delta")
+
+if [[ -n "$files" ]]; then
+  echo "$files" | tr '\n' '\0' | xargs -0 git add
+  echo "✅ Files staged successfully."
+  git status -s
+fi

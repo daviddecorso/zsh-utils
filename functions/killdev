@@ -1,0 +1,20 @@
+local servers=(
+  "vite"
+  "wrangler"
+  "expo"
+  "next"
+  "nuxt"
+  "webpack"
+  "react-scripts"
+  "nodemon"
+  "turbo"
+)
+
+echo "Terminating dev servers..."
+
+local server
+for server in "${servers[@]}"; do
+  pkill -9 -f "$server" 2>/dev/null
+done
+
+echo "✅ All clean!"

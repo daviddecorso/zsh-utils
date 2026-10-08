@@ -1,0 +1,26 @@
+# Feeds plans at /plans to an agent.
+local root
+root="$(git rev-parse --show-toplevel 2>/dev/null)" || {
+  echo "❌ Not inside a git repo" >&2; return 1
+}
+local dir="$root/plans"
+
+local plan
+if [[ -n "$1" ]]; then
+  # accept a path, a filename, or a bare slug
+  local -a hits=("$dir"/*"$1"*.md(N) "$1"(N))
+  (( ${#hits} )) || { echo "❌ no plan matching '$1'" >&2; return 1 }
+  if (( ${#hits} > 1 )); then
+    echo "multiple matches:"
+    printf "  %s\n" ${hits:t}
+    return 1
+  fi
+  plan="${hits[1]}"
+else
+  local -a plans=("$dir"/*.md(N.om))
+  (( ${#plans} )) || { echo "❌ no plans in $dir" >&2; return 1 }
+  plan="${plans[1]}"
+fi
+
+echo "🚀  ${plan:t}"
+agy --add-dir "$root" -i "Implement @${plan} exactly as written. Ask before deviating. Don't refactor anything the plan doesn't mention."

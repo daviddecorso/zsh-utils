@@ -1,0 +1,17 @@
+# Git add all & commit, auto-appending the Linear ticket ID from the branch name
+if [ -z "$1" ]; then
+  echo "Please provide a commit message."
+  echo 'Example: gac "feat(ui): Updated the header styling"'
+  return 1
+fi
+
+local msg="$1"
+local branch=$(git branch --show-current)
+local ticket_id=$(echo "$branch" | grep -oE '[A-Za-z]+-[0-9]+' | head -n 1 | tr '[:lower:]' '[:upper:]')
+
+if [[ -n "$ticket_id" ]]; then
+  [[ "$msg" != *\. ]] && msg="$msg."
+  msg="$msg $ticket_id"
+fi
+
+git add . && git commit -m "$msg"

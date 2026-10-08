@@ -1,0 +1,73 @@
+# Make a worktree
+local branch="${1:-$(pbpaste | tr -d '[:space:]')}"
+
+if [[ -z "$branch" ]]; then
+  echo "❌ No branch name — pass one as an arg or copy it from Linear first"
+  return 1
+fi
+
+local root
+root="$(git rev-parse --show-toplevel 2>/dev/null)" || {
+  echo "❌ Not inside a git repo"
+  return 1
+}
+
+local repo_name="${root:t}"
+local dir_name="${branch##*/}"
+local worktrees_root="${GWT_ROOT:-$HOME/Coding/worktrees}"
+local worktree_path="${worktrees_root}/${repo_name}/${dir_name}"
+
+git fetch --quiet origin 2>/dev/null
+
+local base
+base="$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null)"
+if [[ -z "$base" ]]; then
+  if git show-ref --verify --quiet refs/heads/main; then
+    base="main"
+  elif git show-ref --verify --quiet refs/heads/master; then
+    base="master"
+  else
+    base="$(git branch --show-current)"
+  fi
+fi
+
+echo "🌿  branch : $branch"
+echo "📁  path   : $worktree_path"
+
+if git show-ref --verify --quiet "refs/heads/$branch"; then
+  echo "♻️   existing local branch"
+  git worktree add "$worktree_path" "$branch" || return 1
+elif git show-ref --verify --quiet "refs/remotes/origin/$branch"; then
+  echo "☁️   tracking origin/$branch"
+  git worktree add --track -b "$branch" "$worktree_path" "origin/$branch" || return 1
+else
+  echo "✨  new branch off $base"
+  git worktree add -b "$branch" "$worktree_path" "$base" || return 1
+fi
+
+# Quoted so they glob against $root in the loop, not against $PWD here.
+local extras=('.env*' google-services.json 'ios/*/GoogleService-Info.plist' .xcode.env.local)
+local f
+for f in "$root"/${~^extras}(N); do
+  local rel="${f#$root/}"
+  mkdir -p "$worktree_path/${rel:h}"
+  cp "$f" "$worktree_path/$rel" && echo "    ✓ $rel"
+done
+
+local d
+for d in node_modules ios/Pods; do
+  [[ -d "$root/$d" ]] || continue
+  echo "📦  cloning $d..."
+  mkdir -p "$worktree_path/${d:h}"
+  if _gwt_clone "$root/$d" "$worktree_path/$d"; then
+    echo "    ✓ $d"
+  else
+    echo "    ⚠️  $d failed — install manually"
+  fi
+done
+
+if ! git diff --quiet "$base" "$branch" -- package.json yarn.lock pnpm-lock.yaml pnpm-workspace.yaml 2>/dev/null; then
+  echo "⚠️   deps differ from $base — reinstall dependencies"
+fi
+
+cd "$worktree_path"

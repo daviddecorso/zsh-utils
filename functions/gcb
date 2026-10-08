@@ -1,0 +1,5 @@
+if [ -z "$1" ]; then
+  echo "Please provide a branch name."
+  return 1
+fi
+git checkout -b "$1"

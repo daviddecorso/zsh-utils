@@ -1,0 +1,10 @@
+# Open the Linear ticket for the current branch in the browser
+local branch=$(git branch --show-current)
+local ticket_id=$(echo "$branch" | grep -oE '[a-zA-Z0-9]+-[0-9]+' | head -n 1 | tr '[:lower:]' '[:upper:]')
+
+if [[ -n "$ticket_id" ]]; then
+  echo "Opening Linear ticket: $ticket_id..."
+  open "https://linear.app/issue/$ticket_id"
+else
+  echo "Could not find a valid ticket ID in branch name: $branch"
+fi

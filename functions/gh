@@ -1,0 +1,6 @@
+# Wrapper to fix gh stack:
+if [[ $1 == stack && -z $GH_REPO ]]; then
+  GH_REPO=$(command gh repo view --json nameWithOwner -q .nameWithOwner) command gh "$@"
+else
+  command gh "$@"
+fi
