@@ -15,7 +15,7 @@ alias ........="cd ../../../../../../..; ls"
 alias ls="eza --icons --group-directories-first"
 alias la="ls -A"
 alias ll="eza -lah --icons --group-directories-first"
-alias v="clear; eza --git -h -l --group-directories-first --time-style long-iso --color automatic"
+alias v="clear; eza --git -h -l --group-directories-first --time-style long-iso --color=auto"
 alias cat="bat"
 
 alias pr="pnpm run"
@@ -29,7 +29,7 @@ alias ag.="antigravity . --new-window"
 alias arcIcon="defaults write company.thebrowser.Browser currentAppIconName -string "
 alias c="claude"
 
-cleanup-mac() {
+function cleanup-mac {
   echo '🧹 Sweeping up developer trash...'
   rm -rf ~/Library/Developer/Xcode/DerivedData/*(N) && echo '✅ Xcode Derived Data cleared'
   (( $+commands[xcrun] )) && xcrun simctl delete unavailable && echo '✅ Unavailable Simulators deleted'
